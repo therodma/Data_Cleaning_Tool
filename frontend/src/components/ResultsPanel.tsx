@@ -62,6 +62,20 @@ export default function ResultsPanel({ result, analysis, sessionId, apiBase, onR
 
   const tooltipStyle = { backgroundColor: '#faf8f5', border: '1px solid #e0d9cf', borderRadius: '8px', fontSize: '0.78rem', color: '#5a5048' }
 
+  // Build per-column change summary
+  const changeSummaryRows = Object.keys(before_stats).filter(col => {
+    const b = before_stats[col]
+    const a = after_stats[col]
+    if (!a) return false
+    if (b.missing !== a.missing) return true
+    if (b.unique !== a.unique) return true
+    if (b.mean !== undefined && a.mean !== undefined && b.mean !== a.mean) return true
+    return report.column_changes[col]?.length > 0 || report.instruction_log?.some(l => l.includes(`'${col}'`))
+  })
+
+  // Columns that were dropped
+  const droppedCols = Object.keys(before_stats).filter(col => !(col in after_stats))
+
   return (
     <div className="space-y-8">
       {/* Success banner */}
@@ -83,6 +97,88 @@ export default function ResultsPanel({ result, analysis, sessionId, apiBase, onR
               style={{ backgroundColor: '#2c2c2c', color: '#f7f4ef', padding: '0.6rem 1.25rem', borderRadius: '8px', fontSize: '0.82rem', fontWeight: 500, border: 'none', cursor: 'pointer', whiteSpace: 'nowrap' }}>
               ↓ Download All ZIP
             </button>
+          )}
+        </div>
+      </div>
+
+      {/* Before / After Changes Summary */}
+      <div>
+        <p style={sectionLabel}>What Changed</p>
+        <div style={{ backgroundColor: '#faf8f5', border: '1px solid #e0d9cf', borderRadius: '12px', overflow: 'hidden' }}>
+          {/* Header row */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1.5fr 1fr 1fr 2fr', gap: '0', backgroundColor: '#f5f1ec', borderBottom: '1px solid #e0d9cf' }}>
+            {['Column', 'Before', 'After', 'Actions Taken'].map(h => (
+              <div key={h} style={{ ...tableHeader, marginBottom: 0 }}>{h}</div>
+            ))}
+          </div>
+
+          {/* Dropped columns */}
+          {droppedCols.map(col => (
+            <div key={col} style={{ display: 'grid', gridTemplateColumns: '1.5fr 1fr 1fr 2fr', borderBottom: '1px solid #f0ebe3', backgroundColor: '#fdf6ee' }}>
+              <div style={{ ...tableCell, fontWeight: 500, color: '#2c2c2c' }}>{col}</div>
+              <div style={{ ...tableCell, color: '#9c8f80' }}>
+                {before_stats[col].missing} missing · {before_stats[col].unique} unique
+              </div>
+              <div style={{ ...tableCell, color: '#a0622a', fontStyle: 'italic' }}>removed</div>
+              <div style={{ ...tableCell, color: '#a0622a' }}>Column dropped</div>
+            </div>
+          ))}
+
+          {/* Changed columns */}
+          {changeSummaryRows.length === 0 && droppedCols.length === 0 && (
+            <div style={{ padding: '1rem 1.25rem', fontSize: '0.82rem', color: '#9c8f80', fontStyle: 'italic' }}>No column-level changes detected.</div>
+          )}
+          {changeSummaryRows.map(col => {
+            const b = before_stats[col]
+            const a = after_stats[col]
+            const actions = [
+              ...(report.instruction_log?.filter(l => l.includes(`'${col}'`)) ?? []),
+              ...(report.column_changes[col] ?? []),
+            ]
+            const missingDiff = b.missing - a.missing
+            const meanChanged = b.mean !== undefined && a.mean !== undefined && b.mean !== a.mean
+            return (
+              <div key={col} style={{ display: 'grid', gridTemplateColumns: '1.5fr 1fr 1fr 2fr', borderBottom: '1px solid #f0ebe3' }}>
+                <div style={{ ...tableCell, fontWeight: 500, color: '#2c2c2c' }}>{col}</div>
+                <div style={{ ...tableCell, color: '#9c8f80', fontSize: '0.78rem', lineHeight: 1.6 }}>
+                  {b.missing > 0 && <div>{b.missing} missing</div>}
+                  {b.unique !== undefined && <div>{b.unique} unique</div>}
+                  {b.mean !== undefined && <div>mean {b.mean}</div>}
+                </div>
+                <div style={{ ...tableCell, fontSize: '0.78rem', lineHeight: 1.6 }}>
+                  {b.missing !== a.missing && (
+                    <div style={{ color: missingDiff > 0 ? '#3a7a4a' : '#a0622a', fontWeight: 500 }}>
+                      {a.missing} missing {missingDiff > 0 ? `(−${missingDiff})` : `(+${Math.abs(missingDiff)})`}
+                    </div>
+                  )}
+                  {b.missing === a.missing && b.missing > 0 && <div style={{ color: '#9c8f80' }}>{a.missing} missing</div>}
+                  {a.unique !== undefined && <div style={{ color: b.unique !== a.unique ? '#a0622a' : '#9c8f80' }}>{a.unique} unique</div>}
+                  {a.mean !== undefined && <div style={{ color: meanChanged ? '#3a7a4a' : '#9c8f80' }}>mean {a.mean}</div>}
+                </div>
+                <div style={{ ...tableCell, fontSize: '0.78rem', lineHeight: 1.8 }}>
+                  {actions.length > 0
+                    ? actions.map((act, i) => (
+                        <div key={i} style={{ display: 'flex', gap: '0.5rem', alignItems: 'flex-start' }}>
+                          <span style={{ color: '#7a9a7a', flexShrink: 0 }}>✓</span>
+                          <span style={{ color: '#5a5048' }}>{act}</span>
+                        </div>
+                      ))
+                    : <span style={{ color: '#9c8f80', fontStyle: 'italic' }}>stats changed</span>
+                  }
+                </div>
+              </div>
+            )
+          })}
+
+          {/* Global changes (e.g. duplicate rows) */}
+          {report.transformations_applied.length > 0 && (
+            <div style={{ padding: '0.75rem 1.25rem', backgroundColor: '#f5f9f5', borderTop: '1px solid #e0d9cf', display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
+              {report.transformations_applied.map((t, i) => (
+                <span key={i} style={{ fontSize: '0.78rem', color: '#3a7a4a', backgroundColor: '#eaf3ea', border: '1px solid #c0d9c0', borderRadius: '6px', padding: '0.2rem 0.6rem' }}>
+                  ✓ {t}
+                </span>
+              ))}
+            </div>
           )}
         </div>
       </div>
